@@ -21,7 +21,7 @@ class Command(BaseCommand):
             help='''Run library module as a script (terminates option list)'''),
     )
     help = "Runs a Python interactive interpreter. Tries to  use IPython, if it's available."
-
+    shells = ['ipython', 'bpython', 'python']
     requires_model_validation = False
 
     def handle(self, *args, **options):
@@ -39,49 +39,14 @@ class Command(BaseCommand):
         elif args:
             self.handle_file(args)
         else:
-            self.handle_interactive(**options)
+            use_plain = options.get('plain', False)
+            self.handle_interactive(use_plain)
 
-    def handle_interactive(self, **options):
-        use_plain = options.get('plain', False)
-
-        try:
-            if use_plain:
-                # Don't bother loading IPython, because the user wants plain Python.
-                raise ImportError
-            import IPython
-            # Explicitly pass an empty list as arguments, because otherwise IPython
-            # would use sys.argv from this script.
-            shell = IPython.Shell.IPShell(argv=[])
-            shell.mainloop()
-        except ImportError:
-            import code
-            # Set up a dictionary to serve as the environment for the shell, so
-            # that tab completion works on objects that are imported at runtime.
-            # See ticket 5082.
-            imported_objects = {}
-            try: # Try activating rlcompleter, because it's handy.
-                import readline
-            except ImportError:
-                pass
-            else:
-                # We don't have to wrap the following import in a 'try', because
-                # we already know 'readline' was imported successfully.
-                import rlcompleter
-                readline.set_completer(rlcompleter.Completer(imported_objects).complete)
-                readline.parse_and_bind("tab:complete")
-
-            # We want to honor both $PYTHONSTARTUP and .pythonrc.py, so follow system
-            # conventions and get $PYTHONSTARTUP first then import user.
-            if not use_plain: 
-                pythonrc = os.environ.get("PYTHONSTARTUP") 
-                if pythonrc and os.path.isfile(pythonrc): 
-                    try: 
-                        execfile(pythonrc) 
-                    except NameError: 
-                        pass
-                # This will import .pythonrc.py as a side-effect
-                import user
-            code.interact(local=imported_objects)
+    def handle_interactive(self, use_plain):
+        if use_plain:
+            self.python(use_plain=True)
+        else:
+            self.run_shell()
 
     def hande_module(self, argv):
         from runpy import run_module
@@ -121,3 +86,57 @@ class Command(BaseCommand):
         parser.disable_interspersed_args()
         return parser
 
+    def ipython(self):
+        try:
+            from IPython.frontend.terminal.embed import TerminalInteractiveShell
+            shell = TerminalInteractiveShell()
+            shell.mainloop()
+        except ImportError:
+            # IPython < 0.11
+            # Explicitly pass an empty list as arguments, because otherwise
+            # IPython would use sys.argv from this script.
+            from IPython.Shell import IPShell
+            shell = IPShell(argv=[])
+            shell.mainloop()
+
+    def bpython(self):
+        import bpython
+        bpython.embed()
+
+    def python(self, use_plain=False):
+        import code
+        # Set up a dictionary to serve as the environment for the shell, so
+        # that tab completion works on objects that are imported at runtime.
+        # See ticket 5082.
+        imported_objects = {}
+        try: # Try activating rlcompleter, because it's handy.
+            import readline
+        except ImportError:
+            pass
+        else:
+            # We don't have to wrap the following import in a 'try', because
+            # we already know 'readline' was imported successfully.
+            import rlcompleter
+            readline.set_completer(rlcompleter.Completer(imported_objects).complete)
+            readline.parse_and_bind("tab:complete")
+
+        # We want to honor both $PYTHONSTARTUP and .pythonrc.py, so follow system
+        # conventions and get $PYTHONSTARTUP first then import user.
+        if not use_plain:
+            pythonrc = os.environ.get("PYTHONSTARTUP")
+            if pythonrc and os.path.isfile(pythonrc):
+                try:
+                    execfile(pythonrc)
+                except NameError:
+                    pass
+            # This will import .pythonrc.py as a side-effect
+            import user
+        code.interact(local=imported_objects)
+
+    def run_shell(self):
+        for shell in self.shells:
+            try:
+                return getattr(self, shell)()
+            except ImportError:
+                pass
+        raise ImportError
